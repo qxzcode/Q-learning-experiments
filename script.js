@@ -61,7 +61,7 @@ function draw(time) {
     const xPos = canvas.width/2 + cartX;
     const yPos = canvas.height/2;
     ctx.strokeStyle = "black";
-    drawLine(xPos, yPos, xPos+100*Math.cos(angle), yPos-100*Math.sin(angle));
+    drawLine(xPos, yPos, xPos+PENDULUM_RADIUS*Math.cos(angle), yPos-PENDULUM_RADIUS*Math.sin(angle));
     
     ctx.fillStyle = "black";
     ctx.fillRect(xPos - 5, yPos - 5, 10, 10);
@@ -70,35 +70,43 @@ function draw(time) {
 requestAnimationFrame(draw);
 
 
-const MOTOR_POWER = 5;
-function simulate(vars, dt) {
+const CART_MASS = 1;
+const PENDULUM_MASS = 1;
+const PENDULUM_RADIUS = 100;
+const MOTOR_SPEED = 80;
+const MOTOR_POWER = 10;
+const END_BUFFER = 0.03;
+const GRAVITY = 70;
+const CART_FRICTION = 0.2;
+const PENDULUM_FRICTION = 100;
+const PENDULUM_I = PENDULUM_MASS * PENDULUM_RADIUS*PENDULUM_RADIUS;
+function simulate(vars, dt) {//console.log(dCartX);
+    //// cart X force
     // motor
-    const motor = [-1, 0, 1][vars.lastAction];
-    const ddx = (power) => motor*power*dt + vars.dCartX*(1-Math.pow(0.7, dt));
-    vars.dCartX += ddx(MOTOR_POWER);
-    // TODO: modify dAngle
-    vars.dAngle += ddx(0*MOTOR_POWER) * Math.sin(vars.angle);
-    
-    // gravity
-    const dda = -2*Math.cos(vars.angle) * dt;
-    vars.dAngle += dda;
-    vars.dCartX += 50 * Math.sin(vars.angle) * dda;
-    
+    let mSpeed = MOTOR_SPEED * [-1, 0, 1][vars.lastAction]
+    // push back from edges
+    if (vars.cartX < MIN_X) mSpeed -= MOTOR_SPEED*(vars.cartX-MIN_X)*END_BUFFER;
+    if (vars.cartX > MAX_X) mSpeed -= MOTOR_SPEED*(vars.cartX-MAX_X)*END_BUFFER;
+    let cartForce = MOTOR_POWER*(mSpeed-vars.dCartX);
     // friction
-    // vars.dCartX *= ;
-    // vars.dAngle *= Math.pow(0.7, dt);
+    const Fn = GRAVITY*(CART_MASS + PENDULUM_MASS);
+    cartForce -= CART_FRICTION*Fn*Math.sign(vars.dCartX);
+    // pendulum push on cart
+    cartForce -= PENDULUM_MASS*GRAVITY * Math.sin(vars.angle)*Math.cos(vars.angle);
     
-    // move values
+    //// pendulum torque
+    let penTorque = cartForce*PENDULUM_RADIUS*Math.sin(vars.angle) -
+                    PENDULUM_MASS*GRAVITY*PENDULUM_RADIUS*Math.cos(vars.angle);
+    // friction
+    penTorque -= PENDULUM_FRICTION*Math.sign(vars.dAngle);
+    
+    //// move values
+    vars.dCartX += cartForce/CART_MASS * dt;
+    vars.dAngle += penTorque/PENDULUM_I * dt;
+    if (vars.dAngle > +3) vars.dAngle = +3;
+    if (vars.dAngle < -3) vars.dAngle = -3;
     vars.cartX += vars.dCartX * dt;
     vars.angle += vars.dAngle * dt;
-    
-    // push back from edges (not physically accurate)
-    if (vars.cartX < MIN_X) {
-        vars.dCartX += 100*dt;
-    }
-    if (vars.cartX > MAX_X) {
-        vars.dCartX -= 100*dt;
-    }
 }
 
 function simulateFor(vars, time, steps) {
@@ -115,20 +123,34 @@ function simulateFor(vars, time, steps) {
 
 /// utility functions
 
+const MIN_X = -canvas.width/3;
+const MAX_X = +canvas.width/3;
+
+const xRange = [MIN_X, MAX_X];
+const dxRange = [-150, 150];
+const aRange = [0, 2*Math.PI];
+const daRange = [-2, 2];
+
 const NUM_QUANTS = 7;
-function quantize(v, min, max) {
+function quantize(v, [min, max]) {
     if (v < min) v = min;
     if (v > max-0.001) v = max-0.001;
     return Math.floor(NUM_QUANTS * (v-min)/(max-min));
 }
+function unquantize(i, [min, max]) {
+    const INT = (max-min)/NUM_QUANTS;
+    return min + i*INT + INT/2;
+}
+
+const NUM_STATES = NUM_QUANTS*NUM_QUANTS*NUM_QUANTS*NUM_QUANTS;
 
 const states = {};
 function getState(vars) {
-    const x = quantize(cartX, MIN_X, MAX_X);
-    const dx = quantize(dCartX, -150, 150);
-    const a = quantize(getNormAngle(), 0, 2*Math.PI);
-    const da = quantize(dAngle, -2, 2);
-    const key = x+","+dx+","+a+","+da;
+    const x = quantize(cartX, xRange);
+    // const dx = quantize(dCartX, dxRange);
+    const a = quantize(getNormAngle(), aRange);
+    const da = quantize(dAngle, daRange);
+    const key = x+","+/*dx+","+*/a+","+da;
     if (states[key])
         return states[key];
     
@@ -143,10 +165,18 @@ function getState(vars) {
         getNextState(a) {
             if (this.nextStates[a]) return this.nextStates[a];
             
-            // TODO: init vars to well-defined values based on this state
-            let vars = {cartX, dCartX, angle, dAngle, lastAction: a};
+            let vars = this.getVars(a);
             simulateFor(vars, UPDATE_DELAY, UPDATE_DELAY/(1/30));
             return this.nextStates[a] = getState(vars);
+        },
+        getVars(action) {
+            return {
+                cartX: unquantize(x, xRange),
+                dCartX: 0,//unquantize(dx, dxRange),
+                angle: unquantize(a, aRange),
+                dAngle: unquantize(da, daRange),
+                lastAction: action
+            };
         }
     };
 }
@@ -171,15 +201,12 @@ function takeAction(a) {
 
 /// agent control (the meat)
 
-const LEARNING_RATE = 0.2;
+const LEARNING_RATE = 0.6;
 const DISCOUNT_FACTOR = 0.90;
 const INITIAL_Q = 0;
 
-const MIN_X = -canvas.width/3;
-const MAX_X = +canvas.width/3;
-
 let cartX = 0, dCartX = 0;
-let angle = -Math.PI/2*0, dAngle = 0;
+let angle = -Math.PI/2, dAngle = 0;
 let lastAction = 1;
 const globalVars = {
     get cartX() {return cartX}, set cartX(v) {return cartX = v},
