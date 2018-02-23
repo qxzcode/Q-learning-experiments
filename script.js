@@ -21,7 +21,7 @@ window.onkeydown = e => {
     }
 };
 
-const UPDATE_DELAY = 0.4;
+const UPDATE_DELAY = 1.0;
 
 let lastFrame = null;
 let nextUpdate = UPDATE_DELAY;
@@ -29,7 +29,7 @@ let rewardAcc = 0, rewardCount = 0;
 function draw(time) {
     requestAnimationFrame(draw);
     if (lastFrame === null) lastFrame = time;
-    let dt = time - lastFrame;
+    let dt = (time - lastFrame)/1000;
     if (dt > 1/30) dt = 1/30;
     lastFrame = time;
     
@@ -46,12 +46,21 @@ function draw(time) {
     ctx.strokeStyle = "gray";
     drawLine(0, canvas.height/2, canvas.width, canvas.height/2);
     
-    const xPos = canvas.width/2 + cartX;
+    const curState = getState(globalVars);
+    drawState(curState.getNextState(0).getVars(), "red");
+    drawState(curState.getNextState(1).getVars(), "green");
+    drawState(curState.getNextState(2).getVars(), "blue");
+    drawState(globalVars, "black");
+}
+
+function drawState(vars, color) {
+    const xPos = canvas.width/2 + vars.cartX;
     const yPos = canvas.height/2;
-    ctx.strokeStyle = "black";
-    drawLine(xPos, yPos, xPos+PENDULUM_RADIUS*Math.cos(angle), yPos-PENDULUM_RADIUS*Math.sin(angle));
+    ctx.strokeStyle = color;
+    drawLine(xPos, yPos, xPos+PENDULUM_RADIUS*Math.cos(vars.angle),
+                         yPos-PENDULUM_RADIUS*Math.sin(vars.angle));
     
-    ctx.fillStyle = "black";
+    ctx.fillStyle = color;
     ctx.fillRect(xPos - 5, yPos - 5, 10, 10);
 }
 
@@ -92,17 +101,17 @@ function update(dt) {
 const CART_MASS = 1;
 const PENDULUM_MASS = 1;
 const PENDULUM_RADIUS = 100;
-const MOTOR_SPEED = 40;
+const MOTOR_SPEED = 60;
 const MOTOR_POWER = 10;
 const END_BUFFER = 0.03;
 const GRAVITY = 70;
 const CART_FRICTION = 0.2;
 const PENDULUM_FRICTION = 100;
 const PENDULUM_I = PENDULUM_MASS * PENDULUM_RADIUS*PENDULUM_RADIUS;
-function simulate(vars, dt) {//console.log(dCartX);
+function simulate(vars, dt) {
     //// cart X force
     // motor
-    let mSpeed = MOTOR_SPEED * [-1, 0, 1][vars.lastAction]
+    let mSpeed = MOTOR_SPEED * ([-1, 0, 1])[vars.lastAction];
     // push back from edges
     if (vars.cartX < MIN_X) mSpeed -= MOTOR_SPEED*(vars.cartX-MIN_X)*END_BUFFER;
     if (vars.cartX > MAX_X) mSpeed -= MOTOR_SPEED*(vars.cartX-MAX_X)*END_BUFFER;
@@ -165,22 +174,23 @@ const NUM_STATES = NUM_QUANTS*NUM_QUANTS*NUM_QUANTS;
 
 const states = {};
 function getState(vars) {
-    const x = quantize(cartX, xRange);
-    // const dx = quantize(dCartX, dxRange);
-    const a = quantize(getNormAngle(), aRange);
-    const da = quantize(dAngle, daRange);
+    const x = quantize(vars.cartX, xRange);
+    // const dx = quantize(vars.dCartX, dxRange);
+    const a = quantize(getNormAngle(vars.angle), aRange);
+    const da = quantize(vars.dAngle, daRange);
     const key = x+","+/*dx+","+*/a+","+da;
     if (states[key])
         return states[key];
     
     return states[key] = {
+        key,
         0: {Q: INITIAL_Q}, // move left
         1: {Q: INITIAL_Q}, // don't move
         2: {Q: INITIAL_Q}, // move right
         getMaxQ() {
             return Math.max(this[0].Q, this[1].Q, this[2].Q);
         },
-        nextStates: [],
+        nextStates: {},
         getNextState(a) {
             if (this.nextStates[a]) return this.nextStates[a];
             
@@ -207,7 +217,7 @@ function getCurrentReward() {
                 Math.abs(a - Math.PI/2)/Math.PI + Math.abs(dAngle)/2);
 }
 
-function getNormAngle() {
+function getNormAngle(angle) {
     let a = angle % (2*Math.PI);
     if (a < 0) a += 2*Math.PI;
     return a;
