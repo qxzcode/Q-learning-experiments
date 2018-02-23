@@ -1,7 +1,8 @@
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
 
-canvas.width = canvas.height = 500;
+canvas.width = 500;
+canvas.height = 250;
 
 function drawLine(x0, y0, x1, y1) {
     ctx.beginPath();
@@ -21,7 +22,7 @@ window.onkeydown = e => {
     }
 };
 
-const UPDATE_DELAY = 1.0;
+const UPDATE_DELAY = 0.5;
 
 let lastFrame = null;
 let nextUpdate = UPDATE_DELAY;
@@ -45,23 +46,30 @@ function draw(time) {
     // pendulum and stuff
     ctx.strokeStyle = "gray";
     drawLine(0, canvas.height/2, canvas.width, canvas.height/2);
+    drawLine(canvas.width/2, 0, canvas.width/2, canvas.height);
     
     const curState = getState(globalVars);
-    drawState(curState.getNextState(0).getVars(), "red");
-    drawState(curState.getNextState(1).getVars(), "green");
-    drawState(curState.getNextState(2).getVars(), "blue");
+    drawState(curState.getNextState(0).getVars(), "pink");
+    drawState(curState.getNextState(1).getVars(), "lightgreen");
+    drawState(curState.getNextState(2).getVars(), "lightblue");
     drawState(globalVars, "black");
-}
-
-function drawState(vars, color) {
-    const xPos = canvas.width/2 + vars.cartX;
-    const yPos = canvas.height/2;
-    ctx.strokeStyle = color;
-    drawLine(xPos, yPos, xPos+PENDULUM_RADIUS*Math.cos(vars.angle),
-                         yPos-PENDULUM_RADIUS*Math.sin(vars.angle));
     
-    ctx.fillStyle = color;
-    ctx.fillRect(xPos - 5, yPos - 5, 10, 10);
+    function drawState(vars, color) {
+        const xPos = canvas.width/2 + vars.cartX;
+        const yPos = canvas.height/2;
+        ctx.strokeStyle = color;
+        drawLine(xPos, yPos, xPos+PENDULUM_RADIUS*Math.cos(vars.angle),
+                             yPos-PENDULUM_RADIUS*Math.sin(vars.angle));
+        
+        ctx.fillStyle = color;
+        ctx.fillRect(xPos - 5, yPos - 5, 10, 10);
+    }
+    
+    function getMaxQ(a) {
+        const Q = curState.getNextState(a).getMaxQ();
+        document.getElementById("q"+a).textContent = Q.toPrecision(3);
+    }
+    [0,1,2].map(getMaxQ);
 }
 
 requestAnimationFrame(draw);
@@ -211,7 +219,9 @@ function getState(vars) {
 }
 
 function getCurrentReward() {
-    let a = getNormAngle();
+    // return 1-Math.abs(cartX)/MAX_X;
+    
+    let a = getNormAngle(angle);
     if (a > Math.PI*3/2) a -= 2*Math.PI;
     return 4 - (Math.abs(cartX)/MAX_X + Math.abs(dCartX)/150 +
                 Math.abs(a - Math.PI/2)/Math.PI + Math.abs(dAngle)/2);
@@ -233,6 +243,7 @@ function takeAction(a) {
 const LEARNING_RATE = 0.6;
 const DISCOUNT_FACTOR = 0.90;
 const INITIAL_Q = 5;
+const Q_RANDOMNESS = 1.0;
 
 let cartX = 0, dCartX = 0;
 let angle = -Math.PI/2, dAngle = 0;
@@ -246,6 +257,8 @@ const globalVars = {
 };
 
 function updateAgent(reward) {
+    console.log("updateAgent");
+    
     // observe the reward for being in the current state
     const curState = getState(globalVars);
     observeReward(curState, reward, [0,1,2]);
@@ -254,7 +267,7 @@ function updateAgent(reward) {
     let bestAction = null;
     let bestQ = -Infinity;
     for (const a of [0,1,2]) {
-        const Q = curState.getNextState(a).getMaxQ() + Math.random()*0.001;
+        const Q = curState.getNextState(a).getMaxQ() + Math.random()*Q_RANDOMNESS;
         if (Q > bestQ) {
             bestQ = Q;
             bestAction = a;
