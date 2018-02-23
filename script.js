@@ -21,10 +21,11 @@ window.onkeydown = e => {
     }
 };
 
-const UPDATE_DELAY = 0.2;
+const UPDATE_DELAY = 0.4;
 
 let lastFrame = null;
 let nextUpdate = UPDATE_DELAY;
+let rewardAcc = 0, rewardCount = 0;
 function draw(time) {
     requestAnimationFrame(draw);
     if (lastFrame === null) lastFrame = time;
@@ -33,32 +34,19 @@ function draw(time) {
     lastFrame = time;
     
     ///// update
+    const reward = getCurrentReward();
+    document.getElementById("reward").textContent = reward.toPrecision(3);
+    rewardAcc += reward;
+    rewardCount++;
+    
     nextUpdate -= dt;
     if (nextUpdate <= 0) {
         nextUpdate += UPDATE_DELAY;
-        updateAgent();
+        updateAgent(rewardAcc/rewardCount);
+        rewardAcc = rewardCount = 0;
     }
     
-    // gravity
-    const dda = -2*Math.cos(angle) * dt;
-    dAngle += dda;
-    dCartX += 50 * Math.sin(angle) * dda;
-    
-    // friction
-    dCartX *= Math.pow(0.7, dt);
-    dAngle *= Math.pow(0.7, dt);
-    
-    // move values
-    cartX += dCartX * dt;
-    angle += dAngle * dt;
-    
-    // push back from edges (not physically accurate)
-    if (cartX < MIN_X) {
-        dCartX += 100*dt;
-    }
-    if (cartX > MAX_X) {
-        dCartX -= 100*dt;
-    }
+    simulate(globalVars, dt);
     
     
     
@@ -82,6 +70,45 @@ function draw(time) {
 requestAnimationFrame(draw);
 
 
+const MOTOR_POWER = 5;
+function simulate(vars, dt) {
+    // motor
+    const motor = [-1, 0, 1][vars.lastAction];
+    const ddx = (power) => motor*power*dt + vars.dCartX*(1-Math.pow(0.7, dt));
+    vars.dCartX += ddx(MOTOR_POWER);
+    // TODO: modify dAngle
+    vars.dAngle += ddx(0*MOTOR_POWER) * Math.sin(vars.angle);
+    
+    // gravity
+    const dda = -2*Math.cos(vars.angle) * dt;
+    vars.dAngle += dda;
+    vars.dCartX += 50 * Math.sin(vars.angle) * dda;
+    
+    // friction
+    // vars.dCartX *= ;
+    // vars.dAngle *= Math.pow(0.7, dt);
+    
+    // move values
+    vars.cartX += vars.dCartX * dt;
+    vars.angle += vars.dAngle * dt;
+    
+    // push back from edges (not physically accurate)
+    if (vars.cartX < MIN_X) {
+        vars.dCartX += 100*dt;
+    }
+    if (vars.cartX > MAX_X) {
+        vars.dCartX -= 100*dt;
+    }
+}
+
+function simulateFor(vars, time, steps) {
+    const dt = time / steps;
+    for (let n = 0; n < steps; n++) {
+        simulate(vars, dt);
+    }
+}
+
+
 
 ///////////// Q-learning /////////////
 
@@ -96,20 +123,49 @@ function quantize(v, min, max) {
 }
 
 const states = {};
-function getState() {
+function getState(vars) {
     const x = quantize(cartX, MIN_X, MAX_X);
     const dx = quantize(dCartX, -150, 150);
-    let a = angle % (2*Math.PI);
-    if (a < 0) a += 2*Math.PI;
-    a = quantize(a, 0, 2*Math.PI);
+    const a = quantize(getNormAngle(), 0, 2*Math.PI);
     const da = quantize(dAngle, -2, 2);
     const key = x+","+dx+","+a+","+da;
-    if (!states[key]) {
-        states[key] = {
-            Q: INITIAL_Q
-        };
-    }
-    return states[key];
+    if (states[key])
+        return states[key];
+    
+    return states[key] = {
+        0: {Q: INITIAL_Q}, // move left
+        1: {Q: INITIAL_Q}, // don't move
+        2: {Q: INITIAL_Q}, // move right
+        getMaxQ() {
+            return Math.max(this[0].Q, this[1].Q, this[2].Q);
+        },
+        nextStates: [],
+        getNextState(a) {
+            if (this.nextStates[a]) return this.nextStates[a];
+            
+            // TODO: init vars to well-defined values based on this state
+            let vars = {cartX, dCartX, angle, dAngle, lastAction: a};
+            simulateFor(vars, UPDATE_DELAY, UPDATE_DELAY/(1/30));
+            return this.nextStates[a] = getState(vars);
+        }
+    };
+}
+
+function getCurrentReward() {
+    let a = getNormAngle();
+    if (a > Math.PI*3/2) a -= 2*Math.PI;
+    return 4 - (Math.abs(cartX)/MAX_X + Math.abs(dCartX)/150 +
+                Math.abs(a - Math.PI/2)/Math.PI + Math.abs(dAngle)/2);
+}
+
+function getNormAngle() {
+    let a = angle % (2*Math.PI);
+    if (a < 0) a += 2*Math.PI;
+    return a;
+}
+
+function takeAction(a) {
+    lastAction = a;
 }
 
 
@@ -124,32 +180,34 @@ const MAX_X = +canvas.width/3;
 
 let cartX = 0, dCartX = 0;
 let angle = -Math.PI/2*0, dAngle = 0;
+let lastAction = 1;
+const globalVars = {
+    get cartX() {return cartX}, set cartX(v) {return cartX = v},
+    get dCartX() {return dCartX}, set dCartX(v) {return dCartX = v},
+    get angle() {return angle}, set angle(v) {return angle = v},
+    get dAngle() {return dAngle}, set dAngle(v) {return dAngle = v},
+    get lastAction() {return lastAction}, set lastAction(v) {return lastAction = v},
+};
 
-function updateAgent() {return;
+function updateAgent(reward) {
     // observe the reward for being in the current state
-    const cell = grid[agentX][agentY];
-    observeReward([agentX,agentY], cell.reward, getMoveOptions(), cell.isEnd);
-    if (grid[agentX][agentY].isEnd) {
-        agentX = randCoord();
-        agentY = randCoord();
-        console.log("Hit end tile");
-    }
+    const curState = getState(globalVars);
+    observeReward(curState, reward, [0,1,2]);
     
     // move
-    let bestOption = null;
+    let bestAction = null;
     let bestQ = -Infinity;
-    for (const op of getMoveOptions()) {
-        const [x,y] = op;
-        const Q = grid[x][y].Q + Math.random()*0.1;
+    for (const a of [0,1,2]) {
+        const Q = curState.getNextState(a).getMaxQ() + Math.random()*0.1;
         if (Q > bestQ) {
             bestQ = Q;
-            bestOption = op;
+            bestAction = a;
         }
     }
-    [agentX,agentY] = bestOption;
+    takeAction(bestAction);
 }
 
-function observeReward([x, y], r, options) {
-    const newQ = r + DISCOUNT_FACTOR*Math.max(...options.map(([x, y]) => grid[x][y].Q));
-    cell.Q = (1-LEARNING_RATE)*cell.Q + (LEARNING_RATE)*newQ;
+function observeReward(state, r, actions) {
+    const newQ = r + DISCOUNT_FACTOR*Math.max(...actions.map(a => state.getNextState(a).getMaxQ()));
+    state[lastAction].Q = (1-LEARNING_RATE)*state[lastAction].Q + (LEARNING_RATE)*newQ;
 }
