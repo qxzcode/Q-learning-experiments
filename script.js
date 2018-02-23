@@ -34,19 +34,7 @@ function draw(time) {
     lastFrame = time;
     
     ///// update
-    const reward = getCurrentReward();
-    document.getElementById("reward").textContent = reward.toPrecision(3);
-    rewardAcc += reward;
-    rewardCount++;
-    
-    nextUpdate -= dt;
-    if (nextUpdate <= 0) {
-        nextUpdate += UPDATE_DELAY;
-        updateAgent(rewardAcc/rewardCount);
-        rewardAcc = rewardCount = 0;
-    }
-    
-    simulate(globalVars, dt);
+    update(dt);
     
     
     
@@ -70,10 +58,41 @@ function draw(time) {
 requestAnimationFrame(draw);
 
 
+function jump(time) {
+    const dt = 1/30;
+    for (let t = 0; t < time; t += dt) {
+        update(dt);
+    }
+}
+function jumpRT(time) {
+    const dt = 1/30;
+    const start = Date.now();
+    while (Date.now()-start < time) {
+        update(dt);
+    }
+}
+
+function update(dt) {
+    const reward = getCurrentReward();
+    document.getElementById("reward").textContent = reward.toPrecision(3);
+    rewardAcc += reward;
+    rewardCount++;
+    
+    nextUpdate -= dt;
+    if (nextUpdate <= 0) {
+        nextUpdate += UPDATE_DELAY;
+        updateAgent(rewardAcc/rewardCount);
+        rewardAcc = rewardCount = 0;
+    }
+    
+    simulate(globalVars, dt);
+}
+
+
 const CART_MASS = 1;
 const PENDULUM_MASS = 1;
 const PENDULUM_RADIUS = 100;
-const MOTOR_SPEED = 80;
+const MOTOR_SPEED = 40;
 const MOTOR_POWER = 10;
 const END_BUFFER = 0.03;
 const GRAVITY = 70;
@@ -103,8 +122,8 @@ function simulate(vars, dt) {//console.log(dCartX);
     //// move values
     vars.dCartX += cartForce/CART_MASS * dt;
     vars.dAngle += penTorque/PENDULUM_I * dt;
-    if (vars.dAngle > +3) vars.dAngle = +3;
-    if (vars.dAngle < -3) vars.dAngle = -3;
+    vars.dAngle = Math.min(vars.dAngle, daRange[1]);
+    vars.dAngle = Math.max(vars.dAngle, daRange[0]);
     vars.cartX += vars.dCartX * dt;
     vars.angle += vars.dAngle * dt;
 }
@@ -142,7 +161,7 @@ function unquantize(i, [min, max]) {
     return min + i*INT + INT/2;
 }
 
-const NUM_STATES = NUM_QUANTS*NUM_QUANTS*NUM_QUANTS*NUM_QUANTS;
+const NUM_STATES = NUM_QUANTS*NUM_QUANTS*NUM_QUANTS;
 
 const states = {};
 function getState(vars) {
@@ -203,7 +222,7 @@ function takeAction(a) {
 
 const LEARNING_RATE = 0.6;
 const DISCOUNT_FACTOR = 0.90;
-const INITIAL_Q = 0;
+const INITIAL_Q = 5;
 
 let cartX = 0, dCartX = 0;
 let angle = -Math.PI/2, dAngle = 0;
@@ -225,7 +244,7 @@ function updateAgent(reward) {
     let bestAction = null;
     let bestQ = -Infinity;
     for (const a of [0,1,2]) {
-        const Q = curState.getNextState(a).getMaxQ() + Math.random()*0.1;
+        const Q = curState.getNextState(a).getMaxQ() + Math.random()*0.001;
         if (Q > bestQ) {
             bestQ = Q;
             bestAction = a;
