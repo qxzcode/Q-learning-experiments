@@ -1,9 +1,7 @@
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
 
-const CELL_SIZE = 50;
-const GRID_SIZE = 10;
-canvas.width = canvas.height = GRID_SIZE*CELL_SIZE;
+canvas.width = canvas.height = 500;
 
 function drawLine(x0, y0, x1, y1) {
     ctx.beginPath();
@@ -19,61 +17,69 @@ function grayColor(br) {
 
 window.onkeydown = e => {
     if (e.keyCode == 81) { // Q
-        showQ = !showQ;
+        // showQ = !showQ;
     }
 };
 
-let showQ = false;
-function draw(update) {
-    // update
-    if (update) moveAgent();
+const UPDATE_DELAY = 0.2;
+
+let lastFrame = null;
+let nextUpdate = UPDATE_DELAY;
+function draw(time) {
+    requestAnimationFrame(draw);
+    if (lastFrame === null) lastFrame = time;
+    let dt = time - lastFrame;
+    if (dt > 1/30) dt = 1/30;
+    lastFrame = time;
+    
+    ///// update
+    nextUpdate -= dt;
+    if (nextUpdate <= 0) {
+        nextUpdate += UPDATE_DELAY;
+        updateAgent();
+    }
+    
+    // gravity
+    const dda = -2*Math.cos(angle) * dt;
+    dAngle += dda;
+    dCartX += 50 * Math.sin(angle) * dda;
+    
+    // friction
+    dCartX *= Math.pow(0.7, dt);
+    dAngle *= Math.pow(0.7, dt);
+    
+    // move values
+    cartX += dCartX * dt;
+    angle += dAngle * dt;
+    
+    // push back from edges (not physically accurate)
+    if (cartX < MIN_X) {
+        dCartX += 100*dt;
+    }
+    if (cartX > MAX_X) {
+        dCartX -= 100*dt;
+    }
+    
+    
     
     // clear the canvas
     ctx.fillStyle = "white";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // cell contents
-    const [minQ, maxQ] = showQ? getMinMaxQ() : [];
-    for (let x = 0; x < GRID_SIZE; x++) {
-        const cx = x*CELL_SIZE;
-        for (let y = 0; y < GRID_SIZE; y++) {
-            const cy = y*CELL_SIZE;
-            const cell = grid[x][y];
-            ctx.fillStyle = showQ? grayColor((cell.Q - minQ) / (maxQ - minQ)) : cell.color;
-            ctx.fillRect(cx, cy, CELL_SIZE, CELL_SIZE);
-            if (x==agentX && y==agentY) {
-                ctx.fillStyle = "orange";
-                ctx.strokeStyle = "black";
-                ctx.fillRect(cx+CELL_SIZE/4, cy+CELL_SIZE/4, CELL_SIZE/2, CELL_SIZE/2);
-                ctx.strokeRect(cx+CELL_SIZE/4, cy+CELL_SIZE/4, CELL_SIZE/2, CELL_SIZE/2);
-            }
-        }
-    }
+    // pendulum and stuff
+    ctx.strokeStyle = "gray";
+    drawLine(0, canvas.height/2, canvas.width, canvas.height/2);
     
-    // grid lines
+    const xPos = canvas.width/2 + cartX;
+    const yPos = canvas.height/2;
     ctx.strokeStyle = "black";
-    for (let i = 1; i < GRID_SIZE; i++) {
-        const v = i*CELL_SIZE;
-        drawLine(0, v, canvas.width, v);
-        drawLine(v, 0, v, canvas.width);
-    }
+    drawLine(xPos, yPos, xPos+100*Math.cos(angle), yPos-100*Math.sin(angle));
+    
+    ctx.fillStyle = "black";
+    ctx.fillRect(xPos - 5, yPos - 5, 10, 10);
 }
 
-let interval = null;
-function setSpeed(delay) {
-    clearInterval(interval);
-    if (delay == 0) {
-        interval = setInterval(() => {
-            const start = Date.now();
-            while (Date.now()-start < 1)
-                moveAgent();
-        }, 0);
-    } else {
-        interval = setInterval(() => draw(true), delay);
-    }
-}
-setSpeed(100);
-setTimeout(() => draw(false));
+requestAnimationFrame(draw);
 
 
 
@@ -82,71 +88,44 @@ setTimeout(() => draw(false));
 
 /// utility functions
 
-function makeGridArray(func) {
-    let grid = [];
-    for (let x = 0; x < GRID_SIZE; x++) {
-        grid[x] = [];
-        for (let y = 0; y < GRID_SIZE; y++) {
-            grid[x][y] = func(x, y);
-        }
+const NUM_QUANTS = 7;
+function quantize(v, min, max) {
+    if (v < min) v = min;
+    if (v > max-0.001) v = max-0.001;
+    return Math.floor(NUM_QUANTS * (v-min)/(max-min));
+}
+
+const states = {};
+function getState() {
+    const x = quantize(cartX, MIN_X, MAX_X);
+    const dx = quantize(dCartX, -150, 150);
+    let a = angle % (2*Math.PI);
+    if (a < 0) a += 2*Math.PI;
+    a = quantize(a, 0, 2*Math.PI);
+    const da = quantize(dAngle, -2, 2);
+    const key = x+","+dx+","+a+","+da;
+    if (!states[key]) {
+        states[key] = {
+            Q: INITIAL_Q
+        };
     }
-    return grid;
+    return states[key];
 }
-
-function randCoord() {
-    return Math.floor(Math.random()*GRID_SIZE);
-}
-
-function getMoveOptions() {
-    let options = [];
-    if (agentX > 0) options.push([agentX-1, agentY]);
-    if (agentY > 0) options.push([agentX, agentY-1]);
-    if (agentX < GRID_SIZE-1) options.push([agentX+1, agentY]);
-    if (agentY < GRID_SIZE-1) options.push([agentX, agentY+1]);
-    return options;
-}
-
-function getMinMaxQ() {
-    let minQ = +Infinity;
-    let maxQ = -Infinity;
-    for (let x = 0; x < GRID_SIZE; x++) {
-        for (let y = 0; y < GRID_SIZE; y++) {
-            const Q = grid[x][y].Q;
-            minQ = Math.min(minQ, Q);
-            maxQ = Math.max(maxQ, Q);
-        }
-    }
-    return [minQ, maxQ];
-}
-
-
-/// grid initialization
-
-const INITIAL_Q = 0.5;
-function makeCell(color, reward, isEnd) {
-    return {color, reward, isEnd: !!isEnd, Q: INITIAL_Q};
-}
-
-const grid = makeGridArray((x, y) => {
-    let cell;
-    if (Math.random()<0.8) {
-        cell = makeCell("white", -0.04);
-    } else {
-        cell = makeCell("red", -1, true);
-    }
-    return cell;
-});
-grid[randCoord()][randCoord()] = makeCell("green", +1, true);
 
 
 /// agent control (the meat)
 
 const LEARNING_RATE = 0.2;
 const DISCOUNT_FACTOR = 0.90;
+const INITIAL_Q = 0;
 
-let agentX = randCoord(), agentY = randCoord();
+const MIN_X = -canvas.width/3;
+const MAX_X = +canvas.width/3;
 
-function moveAgent() {
+let cartX = 0, dCartX = 0;
+let angle = -Math.PI/2*0, dAngle = 0;
+
+function updateAgent() {return;
     // observe the reward for being in the current state
     const cell = grid[agentX][agentY];
     observeReward([agentX,agentY], cell.reward, getMoveOptions(), cell.isEnd);
@@ -170,12 +149,7 @@ function moveAgent() {
     [agentX,agentY] = bestOption;
 }
 
-function observeReward([x, y], r, options, isEnd) {
-    const cell = grid[x][y];
-    if (isEnd) {
-        cell.Q = r;
-    } else {
-        const newQ = r + DISCOUNT_FACTOR*Math.max(...options.map(([x, y]) => grid[x][y].Q));
-        cell.Q = (1-LEARNING_RATE)*cell.Q + (LEARNING_RATE)*newQ;
-    }
+function observeReward([x, y], r, options) {
+    const newQ = r + DISCOUNT_FACTOR*Math.max(...options.map(([x, y]) => grid[x][y].Q));
+    cell.Q = (1-LEARNING_RATE)*cell.Q + (LEARNING_RATE)*newQ;
 }
