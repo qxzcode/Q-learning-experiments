@@ -22,7 +22,7 @@ window.onkeydown = e => {
     }
 };
 
-const UPDATE_DELAY = 0.5;
+const UPDATE_DELAY = 0.2;
 
 let lastFrame = null;
 let nextUpdate = UPDATE_DELAY;
@@ -47,11 +47,15 @@ function draw(time) {
     ctx.strokeStyle = "gray";
     drawLine(0, canvas.height/2, canvas.width, canvas.height/2);
     drawLine(canvas.width/2, 0, canvas.width/2, canvas.height);
+    ctx.strokeStyle = "green";
+    drawLine(canvas.width/2-50, 0, canvas.width/2-50, canvas.height);
+    drawLine(canvas.width/2+50, 0, canvas.width/2+50, canvas.height);
     
     const curState = getState(globalVars);
-    drawState(curState.getNextState(0).getVars(), "pink");
-    drawState(curState.getNextState(1).getVars(), "lightgreen");
-    drawState(curState.getNextState(2).getVars(), "lightblue");
+    // drawState(curState.getNextState(0).getVars(), "pink");
+    // drawState(curState.getNextState(1).getVars(), "lightgreen");
+    // drawState(curState.getNextState(2).getVars(), "lightblue");
+    drawState(curState.getVars(), "gray");
     drawState(globalVars, "black");
     
     function drawState(vars, color) {
@@ -67,7 +71,7 @@ function draw(time) {
     
     function getMaxQ(a) {
         const Q = curState.getNextState(a).getMaxQ();
-        document.getElementById("q"+a).textContent = Q.toPrecision(3);
+        document.getElementById("q"+a).textContent = Q;
     }
     [0,1,2].map(getMaxQ);
 }
@@ -87,6 +91,18 @@ function jumpRT(time) {
     while (Date.now()-start < time) {
         update(dt);
     }
+}
+let int = null;
+function startFast() {
+    if (int == null) {
+        int = setInterval(() => jumpRT(1000), 1500);
+        qRandomness = 0.5;
+    }
+}
+function stopFast() {
+    clearInterval(int);
+    int = null;
+    qRandomness = 0.001;
 }
 
 function update(dt) {
@@ -163,11 +179,11 @@ const MIN_X = -canvas.width/3;
 const MAX_X = +canvas.width/3;
 
 const xRange = [MIN_X, MAX_X];
-const dxRange = [-150, 150];
+const dxRange = [-MOTOR_SPEED, MOTOR_SPEED];
 const aRange = [0, 2*Math.PI];
 const daRange = [-2, 2];
 
-const NUM_QUANTS = 7;
+const NUM_QUANTS = 20;
 function quantize(v, [min, max]) {
     if (v < min) v = min;
     if (v > max-0.001) v = max-0.001;
@@ -178,15 +194,17 @@ function unquantize(i, [min, max]) {
     return min + i*INT + INT/2;
 }
 
-const NUM_STATES = NUM_QUANTS*NUM_QUANTS*NUM_QUANTS;
+const NUM_STATES = NUM_QUANTS*NUM_QUANTS*NUM_QUANTS*NUM_QUANTS;
+document.getElementById("NUM_STATES").textContent = NUM_STATES;
+let statesFound = 0;
 
 const states = {};
 function getState(vars) {
     const x = quantize(vars.cartX, xRange);
-    // const dx = quantize(vars.dCartX, dxRange);
+    const dx = quantize(vars.dCartX, dxRange);
     const a = quantize(getNormAngle(vars.angle), aRange);
     const da = quantize(vars.dAngle, daRange);
-    const key = x+","+/*dx+","+*/a+","+da;
+    const key = x+","+dx+","+a+","+da;
     if (states[key])
         return states[key];
     
@@ -209,12 +227,13 @@ function getState(vars) {
         getVars(action) {
             return {
                 cartX: unquantize(x, xRange),
-                dCartX: 0,//unquantize(dx, dxRange),
+                dCartX: unquantize(dx, dxRange),
                 angle: unquantize(a, aRange),
                 dAngle: unquantize(da, daRange),
                 lastAction: action
             };
-        }
+        },
+        found: false
     };
 }
 
@@ -223,8 +242,20 @@ function getCurrentReward() {
     
     let a = getNormAngle(angle);
     if (a > Math.PI*3/2) a -= 2*Math.PI;
-    return 4 - (Math.abs(cartX)/MAX_X + Math.abs(dCartX)/150 +
-                Math.abs(a - Math.PI/2)/Math.PI + Math.abs(dAngle)/2);
+    
+    a = Math.abs(a - Math.PI/2) / (Math.PI/6);
+    const da = Math.abs(dAngle) / 0.4;
+    const x = Math.abs(cartX) / MAX_X;
+    if (a < 1 &&
+        da < 1) {
+        document.getElementById("foundGoal").textContent = "yep";
+        return (1.0 + (1-a)*1.0 + (1-da)*1.0) * Math.sqrt(1-x);
+    } else {
+        return -0.04;
+    }
+    
+    // return 4 - (Math.abs(cartX)/MAX_X + Math.abs(dCartX)/150 +
+    //             Math.abs(a - Math.PI/2)/Math.PI + Math.abs(dAngle)/2);
 }
 
 function getNormAngle(angle) {
@@ -240,10 +271,10 @@ function takeAction(a) {
 
 /// agent control (the meat)
 
-const LEARNING_RATE = 0.6;
-const DISCOUNT_FACTOR = 0.90;
-const INITIAL_Q = 5;
-const Q_RANDOMNESS = 1.0;
+const LEARNING_RATE = 0.94;
+const DISCOUNT_FACTOR = 0.80;
+const INITIAL_Q = 0;
+let qRandomness = 0.5;
 
 let cartX = 0, dCartX = 0;
 let angle = -Math.PI/2, dAngle = 0;
@@ -257,17 +288,24 @@ const globalVars = {
 };
 
 function updateAgent(reward) {
-    console.log("updateAgent");
+    // console.log("updateAgent");
+    document.getElementById("updates").textContent++;
     
     // observe the reward for being in the current state
     const curState = getState(globalVars);
     observeReward(curState, reward, [0,1,2]);
+    if (!curState.found) {
+        curState.found = true;
+        statesFound++;
+        document.getElementById("statesFound").textContent = statesFound;
+        document.getElementById("percentFound").textContent = (100*statesFound/NUM_STATES).toFixed(0);
+    }
     
     // move
     let bestAction = null;
     let bestQ = -Infinity;
     for (const a of [0,1,2]) {
-        const Q = curState.getNextState(a).getMaxQ() + Math.random()*Q_RANDOMNESS;
+        const Q = curState.getNextState(a).getMaxQ() + Math.random()*qRandomness;
         if (Q > bestQ) {
             bestQ = Q;
             bestAction = a;
