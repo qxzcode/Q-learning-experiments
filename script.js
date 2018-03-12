@@ -116,11 +116,14 @@ const outputE = document.getElementById("output");
 
 function height(x) {
     x = x-WIDTH/2;
-    return x*x * 4*HEIGHT/(WIDTH*WIDTH);
+    const x2 = x*x;
+    const x4 = x2*x2;
+    return 3.73008e-7*x4 - 0.019313*x2 + 250;
 }
 function dHeight(x) {
     x = x-WIDTH/2;
-    return 2*x * 4*HEIGHT/(WIDTH*WIDTH);
+    const x3 = x*x*x;
+    return 1.492032e-6*x3 - 0.038626*x;
 }
 
 function quantize(x, min, max, n) {
@@ -131,8 +134,8 @@ function quantize(x, min, max, n) {
 }
 
 let states = {};
-const QUANTS_X = 80;
-const QUANTS_VX = 64;
+const QUANTS_X = 50;
+const QUANTS_VX = 50;
 function getState() {
     const qx = quantize(carX, 0, WIDTH, QUANTS_X);
     const qvx = quantize(carVX, -500, 500, QUANTS_VX);
@@ -197,7 +200,7 @@ function weightedRand(arr) {
 /// agent control (the meat)
 
 const LEARNING_RATE = 0.01;
-const RANDOMNESS = 9.1;
+let   RANDOM_RATE = 0.5;
 const DISCOUNT_FACTOR = 0.97;
 
 let carX = WIDTH/2, carVX = 0;
@@ -223,20 +226,10 @@ function updateAgent() {
         lastState = nextState;
     }
     
-    // move
-    let arr = [0,1,2].map(a => Math.exp(nextState.Q[a]));
-    const sum = arr.reduce((a, b) => a + b);
-    arr = arr.map(x => x/sum);
-    // return maxElement(arr);
-    return weightedRand(arr);
-    // for (const a of [0, 1, 2]) {
-    //     const Q = nextState.Q[a] + Math.random()*RANDOMNESS;
-    //     if (Q > bestQ) {
-    //         bestQ = Q;
-    //         bestAction = a;
-    //     }
-    // }
-    // return bestAction;
+    // chose action
+    if (Math.random() < RANDOM_RATE) return Math.floor(Math.random()*3);
+    const actionQs = [0,1,2].map(a => nextState.Q[a]);
+    return maxElement(actionQs);
 }
 
 function observeReward(curState, action, nextState, reward) {
