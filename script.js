@@ -61,20 +61,20 @@ function draw(time) {
         const a = showQA;
         const dx = WIDTH/QUANTS_X;
         let [min, max] = getMinMaxQ(a);
-        min = Math.min(min, -0.01);
-        max = Math.max(max, 0.01);
+        min = Math.min(min*1.1, -0.01);
+        max = Math.max(max*1.1, 0.01);
         if (max < 0) min = 0;
         
         const zero = getY(0);
         ctx.strokeStyle = "green";
         drawLine(0, zero, WIDTH, zero);
         
-        ctx.strokeStyle = "black";
-        for (let qx = 0; qx < QUANTS_X; qx++) {
-            const s0 = states[qx], s1 = states[qx+1];
-            if (!s0 || !s1) continue;
-            drawLine((qx+0.5)*dx, getY(s0.Q[a]), (qx+1.5)*dx, getY(s1.Q[a]));
-        }
+        // ctx.strokeStyle = "black";
+        // for (let qx = 0; qx < QUANTS_X; qx++) {
+        //     const s0 = states[qx], s1 = states[qx+1];
+        //     if (!s0 || !s1) continue;
+        //     drawLine((qx+0.5)*dx, getY(s0.Q[a]), (qx+1.5)*dx, getY(s1.Q[a]));
+        // }
         
         ctx.fillStyle = "blue";
         for (const [x, q] of points[a]) {
@@ -108,6 +108,7 @@ function update(dt) {
     }
     
     agentX += [-AGENT_SPEED, 0, +AGENT_SPEED][action]*dt;
+    if (agentX > WIDTH) agentX = WIDTH/3;
 }
 
 
@@ -128,12 +129,13 @@ function quantize(x, min, max, n) {
 
 let states = {};
 const QUANTS_X = 50;
+const INITIAL_Q = 0.0;
 function getState() {
     const qx = quantize(agentX, 0, WIDTH, QUANTS_X);
     const key = qx;
     if (!states[key]) {
         states[key] = {
-            Q: [0, 0, 0],
+            Q: [INITIAL_Q,INITIAL_Q,INITIAL_Q],
             getMaxQ() {
                 return Math.max(...this.Q);
             }
@@ -190,31 +192,33 @@ function weightedRand(arr) {
 
 /// agent control (the meat)
 
-const LEARNING_RATE = 0.1;
+const LEARNING_RATE = 0.91;
 let   RANDOM_RATE = 0.1;
-const DISCOUNT_FACTOR = 0.97;
+const DISCOUNT_FACTOR = 0.90;
 
 let agentX = WIDTH/2;
 
 function getCurrentReward() {
-    return agentX < WIDTH/5? [1.0, true] : [-0.04, false];
+    return agentX < WIDTH/6? [1.0, true] : [-0.04, false];
 }
 
-let lastState = null;
+let lastState = null, lastX;
 function updateAgent() {
     // observe the reward for being in the current state
     if (!lastState) {
         lastState = getState();
+        lastX = agentX;
         return 1;
     }
     const [reward, reset] = getCurrentReward();
     const nextState = reset? lastState : getState();
-    observeReward(lastState, action, nextState, reward);
+    observeReward(lastState, lastX, action, nextState, reward);
     if (reset) {
         lastState = null;
-        agentX = WIDTH/3*(1+Math.random());
+        agentX = WIDTH/3*(1+2*Math.random());
     } else {
         lastState = nextState;
+        lastX = agentX;
     }
     
     // chose action
@@ -225,9 +229,9 @@ function updateAgent() {
 
 let points = [[],[],[]];
 
-function observeReward(curState, action, nextState, reward) {
+function observeReward(curState, x, action, nextState, reward) {
     const newQ = reward + DISCOUNT_FACTOR*nextState.getMaxQ();
-    points[action].push([agentX, newQ]);
-    if (points[action].length > 10000) points[action].shift();
+    points[action].push([x, newQ]);
+    if (points[action].length > 100) points[action].shift();
     curState.Q[action] = (1-LEARNING_RATE)*curState.Q[action] + (LEARNING_RATE)*newQ;
 }
