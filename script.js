@@ -10,8 +10,18 @@ window.onkeydown = e => {
     if (e.keyCode == 81) { // Q
         showQ = !showQ;
     }
+    if (e.keyCode == 65) { // A
+        showQA = 0;
+    }
+    if (e.keyCode == 83) { // S
+        showQA = 1;
+    }
+    if (e.keyCode == 68) { // D
+        showQA = 2;
+    }
 };
 let showQ = false;
+let showQA = 1;
 
 function drawLine(x0, y0, x1, y1) {
     ctx.beginPath();
@@ -31,7 +41,7 @@ const MOTOR_ACC = 100;
 
 let lastFrame = null;
 let lastUpdate = Infinity;
-const UPDATE_DELAY = 0.5;
+const UPDATE_DELAY = 0.1;
 let action;
 let numUpdates = 1;
 function draw(time) {
@@ -41,27 +51,41 @@ function draw(time) {
     lastFrame = time;
     for (let n = 0; n < numUpdates; n++) update(dt);
     
-    outputE.value = serializeTable()[1];
+    // outputE.value = serializeTable()[1];
     
-    
-    //// clear the canvas
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // markers
-    ctx.strokeStyle = "green";
-    drawLine(WIDTH/5, 0, WIDTH/5, HEIGHT);
-    
-    // terrain
-    ctx.strokeStyle = "black";
-    const dx = WIDTH / 100;
-    for (let x = 0; x < WIDTH; x += dx) {
-        drawLine(x, HEIGHT-height(x), x+dx, HEIGHT-height(x+dx));
+    if (showQ) {
+        const a = showQA;
+        const dx = WIDTH/QUANTS_X;
+        const dy = HEIGHT/QUANTS_VX;
+        const [min, max] = getMinMaxQ(a);
+        for (let qx = 0; qx < QUANTS_X; qx++) {
+            for (let qvx = 0; qvx < QUANTS_VX; qvx++) {
+                const key = qx+","+qvx;
+                const state = states[key];
+                ctx.fillStyle = state? grayColor((state.Q[a]-min)/(max-min)) : "red";
+                ctx.fillRect(qx*dx, qvx*dy, dx, dy);
+            }
+        }
+    } else {
+        //// clear the canvas
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // markers
+        ctx.strokeStyle = "green";
+        drawLine(WIDTH/5, 0, WIDTH/5, HEIGHT);
+        
+        // terrain
+        ctx.strokeStyle = "black";
+        const dx = WIDTH / 100;
+        for (let x = 0; x < WIDTH; x += dx) {
+            drawLine(x, HEIGHT-height(x), x+dx, HEIGHT-height(x+dx));
+        }
+        
+        // car
+        ctx.fillStyle = "orange";
+        ctx.fillRect(carX-10, HEIGHT-height(carX)-10, 20, 20);
     }
-    
-    // car
-    ctx.fillStyle = "orange";
-    ctx.fillRect(carX-10, HEIGHT-height(carX)-10, 20, 20);
     
     requestAnimationFrame(draw);
 }
@@ -107,8 +131,8 @@ function quantize(x, min, max, n) {
 }
 
 let states = {};
-const QUANTS_X = 10;
-const QUANTS_VX = 6;
+const QUANTS_X = 80;
+const QUANTS_VX = 64;
 function getState() {
     const qx = quantize(carX, 0, WIDTH, QUANTS_X);
     const qvx = quantize(carVX, -500, 500, QUANTS_VX);
@@ -124,6 +148,17 @@ function getState() {
     return states[key];
 }
 
+function getMinMaxQ(a) {
+    let minQ = +Infinity;
+    let maxQ = -Infinity;
+    for (const key in states) {
+        const Q = states[key].Q[a];
+        if (Q > maxQ) maxQ = Q;
+        if (Q < minQ) minQ = Q;
+    }
+    return [minQ, maxQ];
+}
+
 function serializeTable() {
     let table = [];
     for (let qx = 0; qx < QUANTS_X; qx++) {
@@ -137,11 +172,33 @@ function serializeTable() {
     return [table, "{\n    "+table.map(x => `{${x.map(y => `{${y}}`)}}`).join(",\n    ")+"\n}"];
 }
 
+function maxElement(arr) {
+    let max = -Infinity;
+    let maxI = -1;
+    for (let i = 0; i < arr.length; i++) {
+        if (arr[i] > max) {
+            max = arr[i];
+            maxI = i;
+        }
+    }
+    return maxI;
+}
+
+function weightedRand(arr) {
+    let n = Math.random();
+    for (let i = 0; i < arr.length; i++) {
+        if (n < arr[i]) return i;
+        n -= arr[i];
+    }
+    throw new Error("weightedRand failed");
+}
+
 
 /// agent control (the meat)
 
-const LEARNING_RATE = 0.2;
-const DISCOUNT_FACTOR = 0.90;
+const LEARNING_RATE = 0.01;
+const RANDOMNESS = 9.1;
+const DISCOUNT_FACTOR = 0.97;
 
 let carX = WIDTH/2, carVX = 0;
 
@@ -158,19 +215,28 @@ function updateAgent() {
     }
     const nextState = getState();
     observeReward(lastState, action, nextState, getCurrentReward());
-    lastState = nextState;
+    if (getCurrentReward() > 0) {
+        lastState = null;
+        carX = WIDTH/3*(1+Math.random());
+        carVX = 0;
+    } else {
+        lastState = nextState;
+    }
     
     // move
-    let bestAction = null;
-    let bestQ = -Infinity;
-    for (const a of [0, 1, 2]) {
-        const Q = nextState.Q[a] + Math.random()*0.1;
-        if (Q > bestQ) {
-            bestQ = Q;
-            bestAction = a;
-        }
-    }
-    return bestAction;
+    let arr = [0,1,2].map(a => Math.exp(nextState.Q[a]));
+    const sum = arr.reduce((a, b) => a + b);
+    arr = arr.map(x => x/sum);
+    // return maxElement(arr);
+    return weightedRand(arr);
+    // for (const a of [0, 1, 2]) {
+    //     const Q = nextState.Q[a] + Math.random()*RANDOMNESS;
+    //     if (Q > bestQ) {
+    //         bestQ = Q;
+    //         bestAction = a;
+    //     }
+    // }
+    // return bestAction;
 }
 
 function observeReward(curState, action, nextState, reward) {
